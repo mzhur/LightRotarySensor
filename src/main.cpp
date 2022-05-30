@@ -10,24 +10,25 @@
 #define NUM_LEDS 8
 #define DATA_PIN 6
 #define SERIAL_DEBUG 9600
+//#define LOG_TOPIC "englishmile/sensors/log"
 #define PIN_SIGNAL_A 2
 #define PIN_SIGNAL_B 3
 #define PIN_BUTTON 4
 #define ETH_RESET_PIN 9
 #define COMMON_GROUND
 #define BRIGHTNESS_PORT 7031
+#define IP_END_BYTE 233
 #define SETUP_TOPIC0 "englishmile/sensors/233/master"
 #define SETUP_TOPIC1 "englishmile/sensors/233/slave"
-//#define LOG_TOPIC "englishmile/sensors/log"
 #define MAXIMUM_JSON_LEN 60 
-#define DEBOUNCE_MS 50
-//#define LONGCLICK_MS 500
-//#define DOUBLECLICK_MS 400
-// Сделать уникальным для каждого сенсора
-byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xA3};
+#define DEBOUNCE 50
+#define LONGCLICK 400
+#define DOUBLECLICK 300
+#define UDP_PACKET_SIZE 7
+byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, IP_END_BYTE}; //last octet like last ip byte 233
 CRGB leds[NUM_LEDS];
 IPAddress router_IP(192,168,55,1);
-IPAddress sensor_IP(192,168,55,233);
+IPAddress sensor_IP(192,168,55,IP_END_BYTE);
 IPAddress mqtt_IP(192,168,55,1);
 StaticJsonDocument<MAXIMUM_JSON_LEN> json_message;
 EthernetClient ethClient;
@@ -36,9 +37,10 @@ PubSubClient mqtt(ethClient);
 Button2 buttonA = Button2(PIN_BUTTON);
 Light light_main = Light();
 Light light_slave = Light();
-volatile long light_increment = 0; 
+volatile int light_increment = 0; 
 volatile int lastEncoded = 0;
 volatile int startButton = 0;
+byte lastBackLightBrightness = 5;
 
 void serviceEncoderInterrupt() {
   int signalA = !digitalRead(PIN_SIGNAL_A);
@@ -55,6 +57,7 @@ void serviceEncoderInterrupt() {
 
 void pressedShort(Button2& btn) {
 String test_str;
+/*
 #ifdef SERIAL_DEBUG
 Serial.println("Light main: ");
 Serial.print("Topic Set: ");
@@ -75,7 +78,7 @@ Serial.println(light_slave.state);
 Serial.print("Brightness: ");
 Serial.println(light_slave.brightness);
 #endif
-
+*/
 if (light_main.topicSet.length() > 0){
   #ifdef LOG_TOPIC
   mqtt.publish(LOG_TOPIC, "Переключаем светильник 1");
@@ -104,7 +107,8 @@ if (light_main.topicSet.length() > 0){
 
 void pressedLong(Button2& btn) {
   String test_str;
-  #ifdef SERIAL_DEBUG
+/*
+#ifdef SERIAL_DEBUG
 Serial.println("Light main: ");
 Serial.print("Topic Set: ");
 Serial.println(light_main.topicSet);
@@ -124,6 +128,7 @@ Serial.println(light_slave.state);
 Serial.print("Brightness: ");
 Serial.println(light_slave.brightness);
 #endif
+*/
   if (light_slave.topicSet.length() > 0) {
   #ifdef LOG_TOPIC
   mqtt.publish(LOG_TOPIC, "Переключаем светильник 2");
@@ -140,7 +145,7 @@ Serial.println(light_slave.brightness);
   test_str.toCharArray(charBuf,test_str.length() + 1); 
   char topicBuf[light_slave.topicSet.length() + 1];
   light_slave.topicSet.toCharArray(topicBuf,light_slave.topicSet.length() + 1);
-  mqtt.publish(topicBuf, charBuf);   
+  mqtt.publish(topicBuf, charBuf);
   }
   else{
   #ifdef LOG_TOPIC
@@ -157,6 +162,7 @@ asm volatile ("jmp 0x0000");
 void mqtt_setup_connect(){
   mqtt.connect("testSensor2");
   delay(500);
+  String test_str;
   if (mqtt.connected()) {
   mqtt.subscribe(SETUP_TOPIC0);
   mqtt.subscribe(SETUP_TOPIC1);
@@ -259,6 +265,21 @@ update_state(light_slave, state, brightness);
 json_message.clear();
 
 }
+void DoublePressed(Button2& btn){
+if (leds[0].getAverageLight() > 0){
+for (byte j=0; j<8; j++) {
+leds[j] = CRGB(0,0,0);
+}
+FastLED.show();
+}
+else{
+for (byte j=0; j<8; j++) {
+leds[j] = CRGB(lastBackLightBrightness,lastBackLightBrightness,lastBackLightBrightness);
+}
+FastLED.show();
+}  
+}
+
 
 void setup() {
   //initialize the backlight diods
@@ -278,10 +299,11 @@ void setup() {
   #endif
   //buttonA.setPressedHandler(pressed);
   //buttonA.setReleasedHandler(released);
-  buttonA.setDebounceTime(50);
-  buttonA.setLongClickTime(400);
+  buttonA.setDebounceTime(DEBOUNCE);
+  buttonA.setLongClickTime(LONGCLICK);
   buttonA.setClickHandler(pressedShort);
   buttonA.setLongClickHandler(pressedLong);
+  buttonA.setDoubleClickHandler(DoublePressed);
   // setup rotary encoder
   #ifdef COMMON_GROUND
   // enable pullup resistors on interrupt pins
@@ -295,17 +317,111 @@ void setup() {
   digitalWrite(ETH_RESET_PIN, HIGH);
   delay(50);
   Ethernet.begin(mac, sensor_IP);
-  delay(1000);
+  delay(500);
   mqtt.setServer(mqtt_IP, 1883);
   mqtt.setCallback(on_message);
   mqtt_setup_connect();
   Udp.begin(BRIGHTNESS_PORT);
+  for (byte j=0; j<8; j++) {
+  leds[j] = CRGB(lastBackLightBrightness,lastBackLightBrightness,lastBackLightBrightness);
+  FastLED.show();
+  delay(200);
+ }
+}
+
+void send_UDP_data(int increment){
+light_increment=0;
+byte packetBuffer[UDP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+memset(packetBuffer, 0, UDP_PACKET_SIZE);
+if (light_main.state){
+packetBuffer[0] = IP_END_BYTE;
+packetBuffer[1] = light_main.unic_id & 0xff;
+packetBuffer[2] = light_main.unic_id  >> 8;
+packetBuffer[3] = light_main.unic_id  >> 16;
+packetBuffer[4] = light_main.unic_id  >> 24;
+packetBuffer[5] = increment & 0xff;
+packetBuffer[6] = increment  >> 8;
+Udp.beginPacket(router_IP, BRIGHTNESS_PORT);
+Udp.write(packetBuffer, UDP_PACKET_SIZE);
+Udp.endPacket();
+#ifdef SERIAL_DEBUG
+Serial.println("Main light Change");
+Serial.print("Increment: ");
+Serial.println(increment);
+Serial.print("First byte: ");
+Serial.println(increment & 0xff);
+Serial.print("Second byte: ");
+Serial.println(increment  >> 8);
+#endif
+}
+else if (light_slave.state){
+packetBuffer[0] = IP_END_BYTE;
+packetBuffer[1] = light_slave.unic_id & 0xff;
+packetBuffer[2] = light_slave.unic_id  >> 8;
+packetBuffer[3] = light_slave.unic_id  >> 16;
+packetBuffer[4] = light_slave.unic_id  >> 24;
+packetBuffer[5] = increment & 0xff;
+packetBuffer[6] = increment  >> 8;
+Udp.beginPacket(router_IP, BRIGHTNESS_PORT);
+Udp.write(packetBuffer, UDP_PACKET_SIZE);
+Udp.endPacket();
+#ifdef SERIAL_DEBUG
+Serial.println("Slave light change");
+Serial.print("Increment: ");
+Serial.println(increment);
+Serial.print("First byte: ");
+Serial.println(increment & 0xff);
+Serial.print("Second byte: ");
+Serial.println(increment  >> 8);
+#endif
+}
+else{
+#ifdef SERIAL_DEBUG
+Serial.println("Change backlight: ");
+#endif
+  
+if ((lastBackLightBrightness > 4) && (lastBackLightBrightness <= 250)){
+lastBackLightBrightness = lastBackLightBrightness + increment;  
+for (byte j=0; j<8; j++) {
+leds[j] = CRGB(lastBackLightBrightness,lastBackLightBrightness,lastBackLightBrightness);
+}
+FastLED.show();
+}
+else if (lastBackLightBrightness <=4){
+lastBackLightBrightness = 5;
+}
+else if (lastBackLightBrightness > 250){
+lastBackLightBrightness = 250;
+}
+
+}
 }
 
 void loop() {
 if (!mqtt.connected()){
   mqtt_setup_connect();
 }
+byte packetBuffer[5];
+int packetSize = Udp.parsePacket();
+if (packetSize == 5){
+Udp.read(packetBuffer, 5);
+if ((packetBuffer[0] + packetBuffer[1] + packetBuffer[2]) == ((packetBuffer[3]<<8) | (packetBuffer[4]))){
+for (byte j=0; j<8; j++) {
+leds[j] = CRGB(packetBuffer[0],packetBuffer[1],packetBuffer[2]);
+}
+FastLED.show();
+}
+}
+//rotary encoder signal need to bee push by network (UDP), mqtt is totaly slow....
+if (light_increment > 3) {
+         send_UDP_data(light_increment);
+}
+    
+if (light_increment < -3) {
+         send_UDP_data(light_increment);
+          }
+
+
 buttonA.loop();
 mqtt.loop();
 }
