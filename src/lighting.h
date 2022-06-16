@@ -11,8 +11,9 @@ class Light {
     String topicSet;
     boolean state;
     long brightness;
+    unsigned int port;
     Light();
     void Switch();
-    void Setup(unsigned long u_id, String state, String set);
+    void Setup(unsigned long u_id, String state, String set, unsigned int port_income);
 };
 #endif
