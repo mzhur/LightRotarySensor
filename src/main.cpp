@@ -8,7 +8,7 @@
 #include <Button2.h>
 #include <lighting.h>
 #define NUM_LEDS 8
-//#define DATA_PIN 6
+#define DATA_PIN 6
 //#define SERIAL_DEBUG 9600
 //#define LOG_TOPIC "englishmile/sensors/log"
 #define PIN_SIGNAL_A 2
@@ -38,6 +38,7 @@ byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, IP_END_BYTE}; //last octet like last
 #ifdef DATA_PIN
 CRGB leds[NUM_LEDS];
 #endif
+
 IPAddress router_IP(192,168,55,1);
 IPAddress sensor_IP(192,168,55,IP_END_BYTE);
 IPAddress mqtt_IP(192,168,55,1);
