@@ -14,25 +14,29 @@
 #define PIN_SIGNAL_A 2
 #define PIN_SIGNAL_B 3
 #define PIN_BUTTON 4
-#define ETH_RESET_PIN 9 //для выключателя 237 нужно заменить на 5
+#define PIN_IR 5
+#define ETH_RESET_PIN 9 //для выключателя 234 нужно заменить на 5
 #define COMMON_GROUND
+//#define ROTARY_BACKLIGHT
 #define BACKLIGHT_PORT 7031
 //#define IP_END_BYTE 233 // Выключатель у кровати в спальне моя сторона
 //#define IP_END_BYTE 234 // Выключатель у кровати в спальне сторона Инны
 //#define IP_END_BYTE 235 // Выключатель у входа в спальне
 //#define IP_END_BYTE 236  // Выключатель в гостинной над столом
-//#define IP_END_BYTE 237 // Выключатель в ванной
+#define IP_END_BYTE 237 // Выключатель в ванной
+
 //#define IP_END_BYTE 238 // Выключатель в гостинная у входа
 //#define IP_END_BYTE 239 // Выключатель над столешницей
-#define IP_END_BYTE 240 // Выключатель детская у входа
-#define SETUP_TOPIC0 "englishmile/sensors/240/master"
-#define SETUP_TOPIC1 "englishmile/sensors/240/slave"
-#define MQTT_NAME "englishmile-light-sensor-240"
+//#define IP_END_BYTE 240 // Выключатель детская у входа
+#define SETUP_TOPIC0 "englishmile/sensors/237/master"
+#define SETUP_TOPIC1 "englishmile/sensors/237/slave"
+#define SETUP_TOPIC2 "englishmile/sensors/237/backlight"
+#define MQTT_NAME "englishmile-light-sensor-237"
 #define MAXIMUM_JSON_LEN 60 
 #define DEBOUNCE 50
-#define LONGCLICK 400
+#define LONGCLICK 350
 #define UDP_PACKET_SIZE 7
-#define DIRECTION 1
+#define DIRECTION 0
 #define BIT_INCREMENT 1
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, IP_END_BYTE}; //last octet like last ip byte
 #ifdef DATA_PIN
@@ -47,6 +51,9 @@ EthernetClient ethClient;
 EthernetUDP Udp;
 PubSubClient mqtt(ethClient);
 Button2 buttonA = Button2(PIN_BUTTON);
+#ifdef PIN_IR
+Button2 buttonB = Button2(PIN_IR);
+#endif
 Light light_main = Light();
 Light light_slave = Light();
 volatile int light_increment = 0; 
@@ -148,6 +155,7 @@ void mqtt_setup_connect(){
   if (mqtt.connected()) {
   mqtt.subscribe(SETUP_TOPIC0);
   mqtt.subscribe(SETUP_TOPIC1);
+  mqtt.subscribe(SETUP_TOPIC2);
   }
   else {
   delay(1000);
@@ -228,6 +236,12 @@ mqtt.publish(LOG_TOPIC, errBuf2);
 mqtt.subscribe(state);
 }
 
+if (String(topic) == SETUP_TOPIC2) {
+color1 = json_message["green"].as<byte>();
+color2 = json_message["red"].as<byte>();
+color3 = json_message["blue"].as<byte>();
+}
+
 if (String(topic) == light_main.topicState) { //обработка сообщения состояния для первого светильника
 auto brightness = json_message["brightness"].as<long>();;
 auto state = json_message["state"].as<const char*>();
@@ -258,6 +272,15 @@ FastLED.show();
 }
 #endif
 
+void motion_on(Button2& btn) {
+mqtt.publish("wc/motion", "1"); 
+}
+
+void motion_off(Button2& btn) {
+mqtt.publish("wc/motion", "0");
+}
+
+
 void setup() {
   #ifdef DATA_PIN
   //initialize the backlight diods
@@ -270,6 +293,10 @@ void setup() {
   pinMode(PIN_SIGNAL_A, INPUT); 
   pinMode(PIN_SIGNAL_B, INPUT);
   pinMode(PIN_BUTTON, INPUT);
+  #ifdef PIN_IR
+  pinMode(PIN_IR, INPUT);
+  #endif
+
   pinMode(ETH_RESET_PIN, OUTPUT);
   digitalWrite(ETH_RESET_PIN, LOW);
   //setup button
@@ -281,6 +308,13 @@ void setup() {
   buttonA.setDebounceTime(DEBOUNCE);
   buttonA.setPressedHandler(pressed);
   buttonA.setReleasedHandler(released);
+  
+  #ifdef PIN_IR
+  buttonB.setDebounceTime(DEBOUNCE);
+  buttonB.setPressedHandler(motion_on);
+  buttonB.setReleasedHandler(motion_off);
+  #endif
+
   // setup rotary encoder
   #ifdef COMMON_GROUND
   // enable pullup resistors on interrupt pins
@@ -356,7 +390,8 @@ else{
 #ifdef SERIAL_DEBUG
 Serial.println("Change backlight: ");
 #endif
-#ifdef DATA_PIN  
+#ifdef DATA_PIN
+#ifdef ROTARY_BACKLIGHT  
 if (((lastBackLightBrightness + increment) > 0) && ((lastBackLightBrightness + increment) <= 255)){
 lastBackLightBrightness = lastBackLightBrightness + increment;  
 }
@@ -367,6 +402,7 @@ else if ((lastBackLightBrightness + increment) > 255){
 lastBackLightBrightness = 255;
 }
 set_color();
+#endif
 #endif
 }
 }
@@ -400,6 +436,7 @@ if (light_increment < -BIT_INCREMENT) {
 }
 
 buttonA.loop();
+buttonB.loop();
 // Зажжем второй светильник, если кнопка зажата долго
 if ((pooling > 0) && ((millis()-pooling) > LONGCLICK)) {
   pooling = 0;
