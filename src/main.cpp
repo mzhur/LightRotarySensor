@@ -14,25 +14,30 @@
 #define PIN_SIGNAL_A 2
 #define PIN_SIGNAL_B 3
 #define PIN_BUTTON 4
-#define PIN_IR 5
 #define ETH_RESET_PIN 9 //для выключателя 234 нужно заменить на 5
 #define COMMON_GROUND
-//#define ROTARY_BACKLIGHT
 #define BACKLIGHT_PORT 7031
+//#define ROTARY_BACKLIGHT
 //#define IP_END_BYTE 233 // Выключатель у кровати в спальне моя сторона
 //#define IP_END_BYTE 234 // Выключатель у кровати в спальне сторона Инны
-//#define IP_END_BYTE 235 // Выключатель у входа в спальне
+#define IP_END_BYTE 235 // Выключатель у входа в спальне
 //#define IP_END_BYTE 236  // Выключатель в гостинной над столом
-#define IP_END_BYTE 237 // Выключатель в ванной
+
+// Подключение датчика движения для IP 237
+//#define IP_END_BYTE 237 // Выключатель в ванной
+//#define PIN_IR 5
+//
 
 //#define IP_END_BYTE 238 // Выключатель в гостинная у входа
 //#define IP_END_BYTE 239 // Выключатель над столешницей
 //#define IP_END_BYTE 240 // Выключатель детская у входа
-#define SETUP_TOPIC0 "englishmile/sensors/237/master"
-#define SETUP_TOPIC1 "englishmile/sensors/237/slave"
-#define SETUP_TOPIC2 "englishmile/sensors/237/backlight"
-#define MQTT_NAME "englishmile-light-sensor-237"
-#define MAXIMUM_JSON_LEN 60 
+#define SETUP_TOPIC0 "englishmile/sensors/235/master"
+#define SETUP_TOPIC1 "englishmile/sensors/235/slave"
+// Управление подсветкой
+#define SETUP_TOPIC2 "englishmile/light/235/set"
+
+#define MQTT_NAME "englishmile-light-sensor-235"
+#define MAXIMUM_JSON_LEN 80 
 #define DEBOUNCE 50
 #define LONGCLICK 350
 #define UDP_PACKET_SIZE 7
@@ -51,6 +56,7 @@ EthernetClient ethClient;
 EthernetUDP Udp;
 PubSubClient mqtt(ethClient);
 Button2 buttonA = Button2(PIN_BUTTON);
+// Детектор движения
 #ifdef PIN_IR
 Button2 buttonB = Button2(PIN_IR);
 #endif
@@ -60,10 +66,10 @@ volatile int light_increment = 0;
 volatile int lastEncoded = 0;
 volatile int startButton = 0;
 #ifdef DATA_PIN
-byte lastBackLightBrightness = 3;
-byte color1 = 255;
-byte color2 = 255;
-byte color3 = 255;
+volatile int lastBackLightBrightness = 3;
+volatile int color1 = 255;
+volatile int color2 = 255;
+volatile int color3 = 255;
 #endif
 unsigned long pooling = 0;
 
@@ -84,6 +90,17 @@ else {
 }
   lastEncoded = encoded; // store this value for next time
 }
+
+#ifdef DATA_PIN
+void set_color(int c1, int c2, int c3, int b){
+for (byte j=0; j<NUM_LEDS; j++) {
+leds[j] = CRGB(round(c1*b/255),round(c2*b/255),round(c3*b/255));
+}
+FastLED.show();
+}
+#endif
+
+
 
 // Обработка нажатия кнопки
 void pressed(Button2& btn) {
@@ -156,6 +173,26 @@ void mqtt_setup_connect(){
   mqtt.subscribe(SETUP_TOPIC0);
   mqtt.subscribe(SETUP_TOPIC1);
   mqtt.subscribe(SETUP_TOPIC2);
+  #ifdef DATA_PIN
+  //'homeassistant/light/237/config' -m '{"~": "englishmile/light/237", "object_id": "backlight_237", "name": "backlight_237", "brightness_scale": 255, "cmd_t": "~/set", "schema": "json", "brightness": true, "color_mode": true, "enabled_by_default": true, "retain": true, "supported_color_modes": ["rgb"]}'
+  String test_str;
+  json_message["~"] = "englishmile/light/235";
+ // json_message["object_id"] = "bl_235";
+  json_message["name"] = "backlight_235";
+ // json_message["brightness_scale"] = 255;
+  json_message["cmd_t"] = "~/set";
+  json_message["schema"] = "json";
+  json_message["brightness"] = true;
+  json_message["color_mode"] = true;
+  JsonArray arr = json_message.createNestedArray("supported_color_modes");
+  arr.add("rgb");
+  json_message["retain"] = true;
+  serializeJson(json_message, test_str);
+  char charBuf[test_str.length() + 1];
+  test_str.toCharArray(charBuf,test_str.length() + 1);
+  mqtt.publish("homeassistant/light/235/config", charBuf, true);  
+  json_message.clear();
+  #endif
   }
   else {
   delay(1000);
@@ -235,13 +272,27 @@ mqtt.publish(LOG_TOPIC, errBuf2);
 #endif
 mqtt.subscribe(state);
 }
-
+#ifdef DATA_PIN
 if (String(topic) == SETUP_TOPIC2) {
-color1 = json_message["green"].as<byte>();
-color2 = json_message["red"].as<byte>();
-color3 = json_message["blue"].as<byte>();
+auto state = json_message["state"].as<const char*>();
+if (String(state) == "ON") {
+if (json_message["color"]["g"].as<int>() != 0){
+color1 = json_message["color"]["g"].as<int>();}
+if (json_message["color"]["r"].as<int>() != 0){
+color2 = json_message["color"]["r"].as<int>();}
+if (json_message["color"]["b"].as<int>() != 0){
+color3 = json_message["color"]["b"].as<int>();}
+if (json_message["brightness"].as<int>() != 0){
+lastBackLightBrightness = json_message["brightness"].as<int>();
 }
-
+set_color(color1, color2, color3, lastBackLightBrightness);
+}
+else if (String(state) == "OFF")
+{
+set_color(color1, color2, color3, 0);
+}
+}
+#endif
 if (String(topic) == light_main.topicState) { //обработка сообщения состояния для первого светильника
 auto brightness = json_message["brightness"].as<long>();;
 auto state = json_message["state"].as<const char*>();
@@ -263,15 +314,7 @@ update_state(light_slave, state, brightness);
 json_message.clear();
 }
 
-#ifdef DATA_PIN
-void set_color(){
-for (byte j=0; j<NUM_LEDS; j++) {
-leds[j] = CRGB(round(color1*lastBackLightBrightness/255),round(color2*lastBackLightBrightness/255),round(color3*lastBackLightBrightness/255));
-}
-FastLED.show();
-}
-#endif
-
+#ifdef PIN_IR
 void motion_on(Button2& btn) {
 mqtt.publish("wc/motion", "1"); 
 }
@@ -279,7 +322,7 @@ mqtt.publish("wc/motion", "1");
 void motion_off(Button2& btn) {
 mqtt.publish("wc/motion", "0");
 }
-
+#endif
 
 void setup() {
   #ifdef DATA_PIN
@@ -334,7 +377,7 @@ void setup() {
   mqtt_setup_connect();
   Udp.begin(BACKLIGHT_PORT);
   #ifdef DATA_PIN
-  set_color();
+  set_color(color1,color2,color3,lastBackLightBrightness);
   #endif
   delay(200);
  }
@@ -401,7 +444,7 @@ lastBackLightBrightness = 0;
 else if ((lastBackLightBrightness + increment) > 255){
 lastBackLightBrightness = 255;
 }
-set_color();
+set_color(color1,color2,color3,lastBackLightBrightness);
 #endif
 #endif
 }
@@ -412,21 +455,7 @@ void loop() {
 if (!mqtt.connected()){
   mqtt_setup_connect();
 }
-#ifdef DATA_PIN
-// Получение цвета подсветки
-byte packetBuffer[5];
-int packetSize = Udp.parsePacket();
-if (packetSize == 5){
-Udp.read(packetBuffer, 5);
-if ((packetBuffer[0] + packetBuffer[1] + packetBuffer[2]) == ((packetBuffer[3]<<8) | (packetBuffer[4]))){
-lastBackLightBrightness = 255;
-color1 = packetBuffer[0];
-color2 = packetBuffer[1];
-color3 = packetBuffer[2];
-set_color();
-}
-}
-#endif
+
 //rotary encoder signal need to bee push by network (UDP), mqtt is totaly slow....
 if (light_increment > BIT_INCREMENT) {
     send_UDP_data(light_increment);
@@ -436,7 +465,9 @@ if (light_increment < -BIT_INCREMENT) {
 }
 
 buttonA.loop();
+#ifdef PIN_IR
 buttonB.loop();
+#endif
 // Зажжем второй светильник, если кнопка зажата долго
 if ((pooling > 0) && ((millis()-pooling) > LONGCLICK)) {
   pooling = 0;
